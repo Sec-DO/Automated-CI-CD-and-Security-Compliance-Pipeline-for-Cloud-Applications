@@ -207,6 +207,37 @@ resource "aws_security_group" "jenkins_sg" {
 }
 
 #########################################
+# STEP 13A: SonarQube SG
+#########################################
+
+resource "aws_security_group" "sonarqube_sg" {
+
+  name   = "sonarqube-sg"
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg.id]
+  }
+
+  ingress {
+    from_port       = 9000
+    to_port         = 9000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+#########################################
 # STEP 14: Bastion EC2
 #########################################
 
@@ -266,6 +297,105 @@ EOF
 }
 
 #########################################
+# STEP 15A: SonarQube EC2
+#########################################
+
+resource "aws_instance" "sonarqube" {
+
+  ami           = var.ami_id
+  instance_type = var.sonarqube_instance_type
+
+  subnet_id = aws_subnet.private.id
+
+  key_name = var.key_name
+
+  vpc_security_group_ids = [
+    aws_security_group.sonarqube_sg.id
+  ]
+
+  user_data = <<-EOF
+#!/bin/bash
+
+# Update system
+dnf update -y
+
+# Install Java 17
+dnf install -y java-17-amazon-corretto
+
+# Install unzip and wget
+dnf install -y unzip wget
+
+# Download SonarQube
+cd /opt
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-25.6.0.109173.zip
+
+# Extract SonarQube
+unzip sonarqube-25.6.0.109173.zip
+
+# Rename directory
+mv sonarqube-25.6.0.109173 sonarqube
+
+# Create sonar user
+id sonar || useradd sonar
+
+# Set ownership
+chown -R sonar:sonar /opt/sonarqube
+
+# Required kernel settings
+echo "vm.max_map_count=524288" >> /etc/sysctl.conf
+echo "fs.file-max=131072" >> /etc/sysctl.conf
+
+sysctl -p
+
+# Configure SonarQube context path
+echo "sonar.web.context=/sonarqube" >> /opt/sonarqube/conf/sonar.properties
+
+# Create SonarQube service
+cat <<SERVICE > /etc/systemd/system/sonarqube.service
+[Unit]
+Description=SonarQube
+After=network.target
+
+[Service]
+Type=forking
+User=sonar
+Group=sonar
+
+ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+
+Restart=always
+LimitNOFILE=131072
+LimitNPROC=8192
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+# Enable and Start SonarQube
+systemctl daemon-reload
+systemctl enable sonarqube
+systemctl start sonarqube
+
+# Save service status
+systemctl status sonarqube > /home/ec2-user/sonarqube-status.txt
+
+# Give ec2-user access
+chown ec2-user:ec2-user /home/ec2-user/sonarqube-status.txt
+
+EOF
+
+  depends_on = [
+    aws_nat_gateway.nat,
+    aws_route_table_association.private_assoc
+  ]
+
+  tags = {
+    Name = "SonarQube"
+  }
+}
+
+#########################################
 # STEP 16: Target Group
 #########################################
 
@@ -274,6 +404,25 @@ resource "aws_lb_target_group" "jenkins_tg" {
   port     = 8080
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
+}
+
+#########################################
+# STEP 16A: SonarQube Target Group
+#########################################
+
+resource "aws_lb_target_group" "sonarqube_tg" {
+
+  name = "sonarqube-tg"
+
+  port = 9000
+
+  protocol = "HTTP"
+
+  vpc_id = aws_vpc.main.id
+
+  health_check {
+    path = "/"
+  }
 }
 
 #########################################
@@ -302,9 +451,20 @@ resource "aws_lb_target_group_attachment" "jenkins_attach" {
   target_id        = aws_instance.jenkins.id
   port             = 8080
 }
-
 #########################################
-# STEP 19: Listener
+# STEP 18A: Attach SonarQube
+#########################################
+
+resource "aws_lb_target_group_attachment" "sonarqube_attach" {
+
+  target_group_arn = aws_lb_target_group.sonarqube_tg.arn
+
+  target_id = aws_instance.sonarqube.id
+
+  port = 9000
+}
+#########################################
+# STEP 19: Jenkins Listener Rule
 #########################################
 
 resource "aws_lb_listener" "http" {
@@ -316,5 +476,27 @@ resource "aws_lb_listener" "http" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.jenkins_tg.arn
+  }
+}
+
+#########################################
+# STEP 20: SonarQube Listener Rule
+#########################################
+
+resource "aws_lb_listener_rule" "sonarqube" {
+
+  listener_arn = aws_lb_listener.http.arn
+
+  priority = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.sonarqube_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/sonarqube*", "/sonar*"]
+    }
   }
 }

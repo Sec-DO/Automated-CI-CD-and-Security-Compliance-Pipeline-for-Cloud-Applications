@@ -32,4 +32,9 @@ variable "public_subnet2_cidr" {
 
 variable "private_subnet_cidr" {
   type = string
+
+}
+variable "sonarqube_instance_type" {
+  description = "SonarQube EC2 instance type"
+  type        = string
 }
