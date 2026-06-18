@@ -38,3 +38,9 @@ variable "sonarqube_instance_type" {
   description = "SonarQube EC2 instance type"
   type        = string
 }
+variable "bastion_instance_type" {
+  type = string
+}
+variable "monitoring_instance_type" {
+  type = string
+}

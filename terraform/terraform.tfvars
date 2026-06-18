@@ -2,9 +2,11 @@ aws_region = "ap-south-1"
 
 ami_id = "ami-0e38835daf6b8a2b9"
 
-instance_type           = "m7i-flex.large"
-sonarqube_instance_type = "c7i-flex.large"
-key_name                = "SecDO"
+bastion_instance_type    = "t3.micro"
+instance_type            = "m7i-flex.large"
+sonarqube_instance_type  = "m7i-flex.large"
+monitoring_instance_type = "m7i-flex.large"
+key_name                 = "SecDO"
 
 my_ip = "0.0.0.0/0"
 
