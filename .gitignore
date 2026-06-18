@@ -83,6 +83,10 @@ reports/
 .coverage
 htmlcov/
 
+# Streamlit
+.streamlit/secrets.toml
+.terraform/
+*.tfstate*
 # =========================
 # Database Dumps
 # =========================
