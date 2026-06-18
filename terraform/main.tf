@@ -238,12 +238,61 @@ resource "aws_security_group" "sonarqube_sg" {
 }
 
 #########################################
+# # STEP 13B: Monitoring Security Group
+#########################################
+
+resource "aws_security_group" "monitoring_sg" {
+
+  name        = "monitoring-sg"
+  description = "Monitoring Security Group"
+  vpc_id      = aws_vpc.main.id
+
+  # Grafana
+  ingress {
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  # Prometheus
+  ingress {
+    from_port       = 9090
+    to_port         = 9090
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  # Node Exporter (internal only)
+  ingress {
+    from_port   = 9100
+    to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Alertmanager (internal only)
+  ingress {
+    from_port   = 9093
+    to_port     = 9093
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+#########################################
 # STEP 14: Bastion EC2
 #########################################
 
 resource "aws_instance" "bastion" {
   ami                    = var.ami_id
-  instance_type          = var.instance_type
+  instance_type          = var.bastion_instance_type
   subnet_id              = aws_subnet.public1.id
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.bastion_sg.id]
@@ -254,42 +303,30 @@ resource "aws_instance" "bastion" {
 }
 
 #########################################
+
 # STEP 15: Jenkins EC2
+
 #########################################
 
 resource "aws_instance" "jenkins" {
-  ami                    = var.ami_id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private.id
-  key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.jenkins_sg.id]
 
-  user_data = <<-EOF
-#!/bin/bash
+  ami           = var.ami_id
+  instance_type = var.instance_type
 
-yum update -y
+  subnet_id = aws_subnet.private.id
 
-wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/rpm-stable/jenkins.repo
+  key_name = var.key_name
 
-rpm --import https://pkg.jenkins.io/rpm-stable/jenkins.io-2026.key
+  vpc_security_group_ids = [
+    aws_security_group.jenkins_sg.id
+  ]
 
-yum upgrade -y
+  user_data = file("${path.module}/userdata/jenkins.sh")
 
-yum install -y java-21-amazon-corretto
-
-yum install -y jenkins
-
-systemctl enable jenkins
-
-systemctl start jenkins
-
-sleep 60
-
-cp /var/lib/jenkins/secrets/initialAdminPassword /home/ec2-user/jenkins-password.txt
-
-chown ec2-user:ec2-user /home/ec2-user/jenkins-password.txt
-
-EOF
+  depends_on = [
+    aws_nat_gateway.nat,
+    aws_route_table_association.private_assoc
+  ]
 
   tags = {
     Name = "Jenkins"
@@ -297,12 +334,15 @@ EOF
 }
 
 #########################################
+
 # STEP 15A: SonarQube EC2
+
 #########################################
 
 resource "aws_instance" "sonarqube" {
 
-  ami           = var.ami_id
+  ami = var.ami_id
+
   instance_type = var.sonarqube_instance_type
 
   subnet_id = aws_subnet.private.id
@@ -313,77 +353,7 @@ resource "aws_instance" "sonarqube" {
     aws_security_group.sonarqube_sg.id
   ]
 
-  user_data = <<-EOF
-#!/bin/bash
-
-# Update system
-dnf update -y
-
-# Install Java 17
-dnf install -y java-17-amazon-corretto
-
-# Install unzip and wget
-dnf install -y unzip wget
-
-# Download SonarQube
-cd /opt
-wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-25.6.0.109173.zip
-
-# Extract SonarQube
-unzip sonarqube-25.6.0.109173.zip
-
-# Rename directory
-mv sonarqube-25.6.0.109173 sonarqube
-
-# Create sonar user
-id sonar || useradd sonar
-
-# Set ownership
-chown -R sonar:sonar /opt/sonarqube
-
-# Required kernel settings
-echo "vm.max_map_count=524288" >> /etc/sysctl.conf
-echo "fs.file-max=131072" >> /etc/sysctl.conf
-
-sysctl -p
-
-# Configure SonarQube context path
-echo "sonar.web.context=/sonarqube" >> /opt/sonarqube/conf/sonar.properties
-
-# Create SonarQube service
-cat <<SERVICE > /etc/systemd/system/sonarqube.service
-[Unit]
-Description=SonarQube
-After=network.target
-
-[Service]
-Type=forking
-User=sonar
-Group=sonar
-
-ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
-ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
-
-Restart=always
-LimitNOFILE=131072
-LimitNPROC=8192
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-# Enable and Start SonarQube
-systemctl daemon-reload
-systemctl enable sonarqube
-systemctl start sonarqube
-
-# Save service status
-systemctl status sonarqube > /home/ec2-user/sonarqube-status.txt
-
-# Give ec2-user access
-chown ec2-user:ec2-user /home/ec2-user/sonarqube-status.txt
-
-EOF
+  user_data = file("${path.module}/userdata/sonarqube.sh")
 
   depends_on = [
     aws_nat_gateway.nat,
@@ -392,6 +362,37 @@ EOF
 
   tags = {
     Name = "SonarQube"
+  }
+}
+
+#########################################
+
+# STEP 15B: Monitoring EC2
+
+#########################################
+
+resource "aws_instance" "monitoring" {
+
+  ami           = var.ami_id
+  instance_type = var.monitoring_instance_type
+
+  subnet_id = aws_subnet.private.id
+
+  key_name = var.key_name
+
+  vpc_security_group_ids = [
+    aws_security_group.monitoring_sg.id
+  ]
+
+  user_data = file("${path.module}/userdata/monitoring.sh")
+
+  depends_on = [
+    aws_nat_gateway.nat,
+    aws_route_table_association.private_assoc
+  ]
+
+  tags = {
+    Name = "Monitoring"
   }
 }
 
@@ -424,7 +425,30 @@ resource "aws_lb_target_group" "sonarqube_tg" {
     path = "/"
   }
 }
+resource "aws_lb_target_group" "grafana_tg" {
 
+  name     = "grafana-tg"
+  port     = 3000
+  protocol = "HTTP"
+
+  vpc_id = aws_vpc.main.id
+
+  health_check {
+    path = "/login"
+  }
+}
+resource "aws_lb_target_group" "prometheus_tg" {
+
+  name     = "prometheus-tg"
+  port     = 9090
+  protocol = "HTTP"
+
+  vpc_id = aws_vpc.main.id
+
+  health_check {
+    path = "/"
+  }
+}
 #########################################
 # STEP 17: Application Load Balancer
 #########################################
@@ -463,6 +487,26 @@ resource "aws_lb_target_group_attachment" "sonarqube_attach" {
 
   port = 9000
 }
+
+resource "aws_lb_target_group_attachment" "grafana_attach" {
+
+  target_group_arn = aws_lb_target_group.grafana_tg.arn
+
+  target_id = aws_instance.monitoring.id
+
+  port = 3000
+}
+
+resource "aws_lb_target_group_attachment" "prometheus_attach" {
+
+  target_group_arn = aws_lb_target_group.prometheus_tg.arn
+
+  target_id = aws_instance.monitoring.id
+
+  port = 9090
+}
+
+
 #########################################
 # STEP 19: Jenkins Listener Rule
 #########################################
@@ -500,3 +544,39 @@ resource "aws_lb_listener_rule" "sonarqube" {
     }
   }
 }
+
+resource "aws_lb_listener_rule" "grafana" {
+
+  listener_arn = aws_lb_listener.http.arn
+
+  priority = 20
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.grafana_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/grafana*"]
+    }
+  }
+}
+resource "aws_lb_listener_rule" "prometheus" {
+
+  listener_arn = aws_lb_listener.http.arn
+
+  priority = 30
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.prometheus_tg.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/prometheus*"]
+    }
+  }
+}
+
