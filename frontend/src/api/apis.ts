@@ -1,4 +1,4 @@
-import { BASE_URL } from "@/lib/apiConnection";
+const BASE_URL = "https://paaydal-be.onrender.com/";
 
 export const userAuth = {
     LOGIN: `${BASE_URL}api/auth/login`,
