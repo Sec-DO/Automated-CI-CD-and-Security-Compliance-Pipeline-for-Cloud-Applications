@@ -23,7 +23,7 @@ services:
       - dvwa
     ports:
       #- 127.0.0.1:4280:80
-      - 4280:80
+      - 0.0.0.0:4280:80
     restart: unless-stopped
 
   db:
