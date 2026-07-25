@@ -1,0 +1,112 @@
+pipeline {
+    agent any
+
+    environment {
+        REPO_URL = 'https://github.com/Sec-DO/Automated-CI-CD-and-Security-Compliance-Pipeline-for-Cloud-Applications.git'
+        BRANCH   = 'main'
+        COMPOSE_PROJECT = 'dvwa'
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout Source Code') {
+            steps {
+                git branch: "${BRANCH}", url: "${REPO_URL}"
+            }
+        }
+
+        stage('Verify Environment') {
+            steps {
+                sh '''
+                echo "=============================="
+                echo "Docker Version"
+                docker --version
+
+                echo ""
+                echo "Docker Compose Version"
+                docker compose version
+
+                echo ""
+                echo "Buildx Version"
+                docker buildx version || true
+
+                echo ""
+                echo "Repository Structure"
+                pwd
+                ls -la
+                ls -la DVWA
+                '''
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                dir('DVWA') {
+                    script {
+                        def scannerHome = tool 'SonarScanner'
+                        withSonarQubeEnv('SonarScanner') {
+                            sh "${scannerHome}/bin/sonar-scanner"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy DVWA') {
+            steps {
+                dir('DVWA') {
+                    sh '''
+                    docker compose -p ${COMPOSE_PROJECT} down || true
+                    docker compose -p ${COMPOSE_PROJECT} pull
+                    docker compose -p ${COMPOSE_PROJECT} up -d
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                dir('DVWA') {
+                    sh '''
+                    echo "=============================="
+                    echo "Running Containers"
+                    docker ps
+
+                    echo ""
+                    docker compose -p ${COMPOSE_PROJECT} ps
+
+                    echo ""
+                    docker images
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "========================================"
+            echo "DVWA deployed successfully!"
+            echo "========================================"
+        }
+
+        failure {
+            echo "========================================"
+            echo "Pipeline Failed!"
+            echo "========================================"
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}
