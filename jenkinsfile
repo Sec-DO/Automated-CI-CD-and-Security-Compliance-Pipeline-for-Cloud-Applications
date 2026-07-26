@@ -3,8 +3,10 @@ pipeline {
 
     environment {
         REPO_URL = 'https://github.com/Sec-DO/Automated-CI-CD-and-Security-Compliance-Pipeline-for-Cloud-Applications.git'
-        BRANCH   = 'main'
+        BRANCH = 'main'
         COMPOSE_PROJECT = 'dvwa'
+        TARGET_URL = 'http://13.203.155.19:4280'
+		EMAIL_TO = 'patilrahulprafulla1@gmail.com,dangerushi19@gmail.com,ameybhalerao004@gmail.com,ashutoshkabade1961@gmail.com'
     }
 
     options {
@@ -28,7 +30,7 @@ pipeline {
         stage('Verify Environment') {
             steps {
                 sh '''
-                echo "=============================="
+                echo "========================================"
                 echo "Docker Version"
                 docker --version
 
@@ -37,8 +39,12 @@ pipeline {
                 docker compose version
 
                 echo ""
-                echo "Buildx Version"
+                echo "Docker Buildx Version"
                 docker buildx version || true
+
+                echo ""
+                echo "Trivy Version"
+                trivy --version
 
                 echo ""
                 echo "Repository Structure"
@@ -48,6 +54,7 @@ pipeline {
                 '''
             }
         }
+
         stage('SonarQube Analysis') {
             steps {
                 dir('DVWA') {
@@ -73,11 +80,86 @@ pipeline {
             }
         }
 
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                mkdir -p trivy-reports
+
+                echo "========================================"
+                echo "Scanning DVWA Image"
+                echo "========================================"
+
+                trivy image \
+                  --severity HIGH,CRITICAL \
+                  --format table \
+                  --exit-code 0 \
+                  -o trivy-reports/dvwa-report.txt \
+                  ghcr.io/digininja/dvwa:latest
+
+                echo "========================================"
+                echo "Scanning MariaDB Image"
+                echo "========================================"
+
+                trivy image \
+                  --severity HIGH,CRITICAL \
+                  --format table \
+                  --exit-code 0 \
+                  -o trivy-reports/mariadb-report.txt \
+                  mariadb:10
+
+                cat trivy-reports/dvwa-report.txt
+                cat trivy-reports/mariadb-report.txt
+                '''
+            }
+        }
+
+        stage('OWASP ZAP Scan') {
+            steps {
+                script {
+
+                    sh 'mkdir -p zap-reports'
+
+                    int zapStatus = sh(
+                        script: """
+                        docker run --rm \
+                          --network host \
+                          --user root \
+                          -v \$(pwd)/zap-reports:/zap/wrk \
+                          ghcr.io/zaproxy/zaproxy:stable \
+                          zap-baseline.py \
+                          -t ${TARGET_URL} \
+                          -r zap-report.html
+                        """,
+                        returnStatus: true
+                    )
+
+                    echo "ZAP Exit Code: ${zapStatus}"
+
+                    if (zapStatus == 3) {
+                        error("OWASP ZAP execution failed.")
+                    }
+
+                    if (zapStatus == 1) {
+                        error("OWASP ZAP detected FAIL findings.")
+                    }
+
+                    if (zapStatus == 2) {
+                        echo "OWASP ZAP reported WARN findings. Continuing pipeline."
+                    }
+
+                    sh '''
+                    echo "Generated Reports"
+                    ls -lah zap-reports || true
+                    '''
+                }
+            }
+        }
+
         stage('Verify Deployment') {
             steps {
                 dir('DVWA') {
                     sh '''
-                    echo "=============================="
+                    echo "========================================"
                     echo "Running Containers"
                     docker ps
 
@@ -85,6 +167,7 @@ pipeline {
                     docker compose -p ${COMPOSE_PROJECT} ps
 
                     echo ""
+                    echo "Docker Images"
                     docker images
                     '''
                 }
@@ -93,9 +176,14 @@ pipeline {
     }
 
     post {
+
         success {
             echo "========================================"
-            echo "DVWA deployed successfully!"
+            echo "Pipeline completed successfully!"
+            echo "DVWA deployed successfully."
+            echo "SonarQube completed."
+            echo "Trivy completed."
+            echo "OWASP ZAP completed."
             echo "========================================"
         }
 
@@ -106,6 +194,69 @@ pipeline {
         }
 
         always {
+
+            archiveArtifacts(
+                artifacts: 'trivy-reports/*.txt,zap-reports/*.html',
+                fingerprint: true,
+                allowEmptyArchive: true
+            )
+
+            emailext(
+                to: "${EMAIL_TO}",
+                subject: "SecDO Pipeline - ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
+                mimeType: 'text/html',
+                attachmentsPattern: 'trivy-reports/*.txt,zap-reports/*.html',
+                body: """
+                <html>
+                <body>
+
+                <h2>SecDO DevSecOps Pipeline Report</h2>
+
+                <table border="1" cellpadding="8" cellspacing="0">
+                    <tr>
+                        <th>Project</th>
+                        <td>${env.JOB_NAME}</td>
+                    </tr>
+
+                    <tr>
+                        <th>Build Number</th>
+                        <td>${env.BUILD_NUMBER}</td>
+                    </tr>
+
+                    <tr>
+                        <th>Status</th>
+                        <td>${currentBuild.currentResult}</td>
+                    </tr>
+
+                    <tr>
+                        <th>Build URL</th>
+                        <td>
+                            <a href="${env.BUILD_URL}">
+                                ${env.BUILD_URL}
+                            </a>
+                        </td>
+                    </tr>
+                </table>
+
+                <br>
+
+                <h3>Security Stages</h3>
+
+                <ul>
+                    <li>✅ SonarQube (SAST)</li>
+                    <li>✅ Trivy Image Scan</li>
+                    <li>✅ OWASP ZAP Baseline Scan</li>
+                </ul>
+
+                <p>
+                Trivy and ZAP reports are attached with this email if they were generated successfully.
+                </p>
+
+                </body>
+                </html>
+                """
+            )
+
             cleanWs()
         }
     }
