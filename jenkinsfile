@@ -128,8 +128,8 @@ pipeline {
                           ghcr.io/zaproxy/zaproxy:stable \
                           zap-baseline.py \
                           -t ${TARGET_URL} \
-                          # -r zap-report.html
-							-r zap-report.txt
+                          -r zap-report.html
+						  # -r zap-report.txt
                         """,
                         returnStatus: true
                     )
