@@ -6,7 +6,7 @@ pipeline {
         BRANCH = 'main'
         COMPOSE_PROJECT = 'dvwa'
         TARGET_URL = 'http://13.204.215.77:4280'
-		EMAIL_TO = 'patilrahulprafulla1@gmail.com,rushikeshdange49@gmail.com,ameybhalerao004@gmail.com,ashutoshkabade1961@gmail.com'
+		EMAIL_TO = 'patilrahulprafulla1@gmail.com,rushikeshdange49@gmail.com,ameybhalerao004@gmail.com,ashutoshkabade1961@gmail.com,dangerushi19@gmail.com'
     }
 
     options {
