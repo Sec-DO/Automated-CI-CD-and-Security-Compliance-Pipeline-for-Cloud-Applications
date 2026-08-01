@@ -244,9 +244,9 @@ pipeline {
                 <h3>Security Stages</h3>
 
                 <ul>
-                    <li>✅ SonarQube (SAST)</li>
-                    <li>✅ Trivy Image Scan</li>
-                    <li>✅ OWASP ZAP Baseline Scan</li>
+                    <li> SonarQube (SAST)</li>
+                    <li> Trivy Image Scan</li>
+                    <li> OWASP ZAP Baseline Scan</li>
                 </ul>
 
                 <p>
