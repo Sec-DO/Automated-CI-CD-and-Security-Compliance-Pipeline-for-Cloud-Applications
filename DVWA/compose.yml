@@ -8,7 +8,7 @@ networks:
 
 services:
   dvwa:
-    build: .
+    #build: .
     # image: ghcr.io/digininja/dvwa:latest
     image: therahulpatil/dvwa:latest
     # Change `always` to `build` to build from local source
