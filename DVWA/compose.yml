@@ -9,7 +9,8 @@ networks:
 services:
   dvwa:
     build: .
-    image: ghcr.io/digininja/dvwa:latest
+    # image: ghcr.io/digininja/dvwa:latest
+    image: therahulpatil/dvwa:latest
     # Change `always` to `build` to build from local source
     pull_policy: always
     environment:
