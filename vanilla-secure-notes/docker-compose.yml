@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: vanilla_vaultnote_app
     ports:
-      - "8080:80"
+      - "9200:80"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
