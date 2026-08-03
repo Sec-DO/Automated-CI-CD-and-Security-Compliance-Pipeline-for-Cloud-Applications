@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VaultNote | Zero-Knowledge Secure Notes (Vanilla HTML/CSS/JS)</title>
+  
+  <!-- Google Fonts & Lucide Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ================= UNLOCK OVERLAY ================= -->
+  <div id="unlock-overlay" class="overlay">
+    <div class="unlock-card glass-panel">
+      <div class="unlock-header">
+        <div class="shield-container">
+          <i data-lucide="shield-check" class="shield-icon text-emerald"></i>
+          <span class="shield-pulse"></span>
+        </div>
+        <h2>VaultNote</h2>
+        <p class="subtitle">Zero-Knowledge Encrypted Workspace</p>
+      </div>
+
+      <div class="crypto-badge-pill">
+        <i data-lucide="terminal" class="text-cyan"></i>
+        <span>AES-256-GCM • PBKDF2 100K • Anti-XSS</span>
+      </div>
+
+      <form id="unlock-form">
+        <div class="form-group">
+          <label id="passphrase-label">Enter Master Passphrase</label>
+          <div class="input-wrapper">
+            <i data-lucide="lock" class="input-icon"></i>
+            <input type="password" id="passphrase-input" placeholder="Master Passphrase..." required>
+            <button type="button" id="toggle-pass-btn" class="icon-btn">
+              <i data-lucide="eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <div id="strength-meter" class="strength-meter hidden">
+          <div class="strength-label">
+            <span id="strength-text">Strength: Weak</span>
+            <span id="strength-score">0%</span>
+          </div>
+          <div class="strength-bar-bg">
+            <div id="strength-bar-fill" class="strength-bar-fill"></div>
+          </div>
+        </div>
+
+        <div id="confirm-pass-group" class="form-group hidden">
+          <label>Confirm Master Passphrase</label>
+          <div class="input-wrapper">
+            <i data-lucide="key" class="input-icon"></i>
+            <input type="password" id="confirm-passphrase-input" placeholder="Repeat passphrase...">
+          </div>
+        </div>
+
+        <div id="error-banner" class="error-banner hidden">
+          <i data-lucide="alert-triangle"></i>
+          <span id="error-text"></span>
+        </div>
+
+        <button type="submit" id="unlock-btn" class="primary-btn glow-btn">
+          <i data-lucide="lock"></i>
+          <span id="unlock-btn-text">Unlock Vault</span>
+        </button>
+      </form>
+
+      <div class="unlock-footer">
+        <button type="button" id="reset-vault-btn" class="reset-link">Reset Vault & Wipe Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MAIN APP CONTAINER ================= -->
+  <div id="app-container" class="app-container hidden">
+    
+    <!-- SIDEBAR -->
+    <aside class="sidebar glass-panel">
+      <div class="sidebar-brand">
+        <div class="brand-logo">
+          <i data-lucide="shield-check" class="text-emerald"></i>
+          <span class="brand-title">VaultNote</span>
+        </div>
+        <div class="vault-badge">
+          <span class="status-dot green"></span>
+          <span>AES-256</span>
+        </div>
+      </div>
+
+      <button id="btn-new-note" class="new-note-btn glow-btn">
+        <i data-lucide="plus"></i>
+        <span>Create Encrypted Note</span>
+      </button>
+
+      <div class="sidebar-section">
+        <h4 class="section-title">CATEGORIES</h4>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-filter="all">
+            <i data-lucide="file-text"></i>
+            <span>All Vault Notes</span>
+            <span id="cnt-all" class="badge">0</span>
+          </button>
+          <button class="nav-item" data-filter="favorites">
+            <i data-lucide="star" class="text-gold"></i>
+            <span>Favorites</span>
+            <span id="cnt-favorites" class="badge">0</span>
+          </button>
+          <button class="nav-item" data-filter="trash">
+            <i data-lucide="trash-2"></i>
+            <span>Trash Bin</span>
+            <span id="cnt-trash" class="badge">0</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-section">
+        <h4 class="section-title">TAGS</h4>
+        <div id="tags-cloud" class="tag-cloud"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <h4 class="section-title">SECURITY TOOLS</h4>
+        <nav class="sidebar-nav">
+          <button id="btn-open-audit" class="nav-item text-cyan">
+            <i data-lucide="shield"></i>
+            <span>Security Inspector & HUD</span>
+          </button>
+          <button id="btn-open-passgen" class="nav-item">
+            <i data-lucide="key-round"></i>
+            <span>Password Generator</span>
+          </button>
+          <button id="btn-open-backup" class="nav-item">
+            <i data-lucide="download"></i>
+            <span>Export / Restore Backup</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="btn-lock-vault" class="lock-vault-btn">
+          <i data-lucide="lock"></i>
+          <span>Lock Vault Session</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN WORKSPACE GRID -->
+    <main class="workspace-grid">
+      
+      <!-- NOTES LIST PANEL -->
+      <section class="notes-list-panel glass-panel">
+        <div class="list-header">
+          <div class="search-box">
+            <i data-lucide="search" class="search-icon"></i>
+            <input type="text" id="search-input" placeholder="Search encrypted notes or tags...">
+          </div>
+          <div class="view-toggle">
+            <button id="btn-view-list" class="mode-btn active" title="List View"><i data-lucide="list"></i></button>
+            <button id="btn-view-grid" class="mode-btn" title="Grid View"><i data-lucide="grid"></i></button>
+          </div>
+        </div>
+
+        <div id="active-tag-banner" class="active-tag-banner hidden">
+          <span>Filtering tag: <strong id="active-tag-name"></strong></span>
+          <button id="btn-clear-tag" class="icon-btn">×</button>
+        </div>
+
+        <div id="notes-wrapper" class="notes-wrapper list"></div>
+      </section>
+
+      <!-- NOTE EDITOR PANEL -->
+      <section class="editor-panel glass-panel">
+        <div id="editor-empty" class="editor-empty">
+          <i data-lucide="shield-check" class="text-emerald empty-icon"></i>
+          <h2>VaultNote Workspace</h2>
+          <p>Select an encrypted note from the left panel or create a new note.</p>
+        </div>
+
+        <div id="editor-active" class="editor-active hidden">
+          <div class="editor-top-bar">
+            <input type="text" id="note-title-input" class="note-title-input" placeholder="Note Title...">
+            <div class="editor-mode-switch">
+              <button class="mode-tab active" data-mode="edit"><i data-lucide="edit-3"></i> <span>Write</span></button>
+              <button class="mode-tab" data-mode="split"><i data-lucide="columns"></i> <span>Split</span></button>
+              <button class="mode-tab" data-mode="preview"><i data-lucide="eye"></i> <span>Preview</span></button>
+              <button id="btn-copy-note" class="icon-btn" title="Copy Raw Text"><i data-lucide="copy"></i></button>
+            </div>
+          </div>
+
+          <div class="editor-tags-bar">
+            <i data-lucide="tag" class="text-muted"></i>
+            <div id="editor-tags-container" class="editor-tags-container"></div>
+            <div class="add-tag-box">
+              <input type="text" id="tag-input" placeholder="Add tag...">
+              <button id="btn-add-tag"><i data-lucide="plus"></i></button>
+            </div>
+          </div>
+
+          <div id="editor-toolbar" class="editor-toolbar">
+            <button data-format="bold" title="Bold"><i data-lucide="bold"></i></button>
+            <button data-format="italic" title="Italic"><i data-lucide="italic"></i></button>
+            <button data-format="h3" title="Heading"><i data-lucide="heading"></i></button>
+            <button data-format="code" title="Code"><i data-lucide="code"></i></button>
+            <button data-format="list" title="List"><i data-lucide="list"></i></button>
+            <button data-format="todo" title="Task List"><i data-lucide="check-square"></i></button>
+            <button data-format="quote" title="Quote"><i data-lucide="quote"></i></button>
+            <span class="divider"></span>
+            <button id="btn-inline-passgen" class="btn-text text-cyan"><i data-lucide="key-round"></i> Generate Secret</button>
+          </div>
+
+          <div id="editor-body" class="editor-body edit">
+            <textarea id="note-textarea" placeholder="Write your note content in Markdown..."></textarea>
+            <div id="preview-container" class="preview-container markdown-body hidden"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- SECURITY AUDIT MODAL -->
+  <div id="modal-audit" class="modal-backdrop hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <div class="modal-title">
+          <i data-lucide="shield-check" class="text-emerald"></i>
+          <h3>Security Inspector & Audit HUD</h3>
+        </div>
+        <button class="close-modal-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-tabs">
+        <button class="modal-tab-btn active" data-tab="playground">Cipher Playground</button>
+        <button class="modal-tab-btn" data-tab="posture">Security Posture</button>
+        <button class="modal-tab-btn" data-tab="xsslogs">XSS Logs (<span id="xss-log-count">0</span>)</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="tab-playground" class="tab-content active">
+          <p class="desc">Live Web Crypto API AES-256-GCM cipher payload demonstrator:</p>
+          <div class="form-group">
+            <label>Plaintext Payload (Memory):</label>
+            <textarea id="cipher-input" rows="2">VaultNote Confidential Content - Zero Knowledge AES-256!</textarea>
+          </div>
+          <div class="form-group">
+            <label>Encrypted AES-GCM Package (Saved to Disk):</label>
+            <pre id="cipher-output" class="code-box"></pre>
+          </div>
+        </div>
+
+        <div id="tab-posture" class="tab-content hidden">
+          <div class="posture-grid">
+            <div class="posture-box">
+              <i data-lucide="lock" class="text-emerald"></i>
+              <h4>AES-256-GCM</h4>
+              <p>Galois/Counter Mode provides payload encryption & authentication tag verification.</p>
+            </div>
+            <div class="posture-box">
+              <i data-lucide="key" class="text-cyan"></i>
+              <h4>PBKDF2 SHA-256</h4>
+              <p>100,000 Key Derivation iterations with unique cryptographically random salt.</p>
+            </div>
+            <div class="posture-box">
+              <i data-lucide="shield" class="text-emerald"></i>
+              <h4>Zero-Knowledge</h4>
+              <p>Passphrase derived only in volatile RAM; keys never stored on disk.</p>
+            </div>
+            <div class="posture-box">
+              <i data-lucide="terminal" class="text-gold"></i>
+              <h4>Anti-XSS Shield</h4>
+              <p>Strict HTML entity sanitizer blocks script injection vectors.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-xsslogs" class="tab-content hidden">
+          <div id="xss-logs-list" class="xss-logs-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PASSWORD GENERATOR MODAL -->
+  <div id="modal-passgen" class="modal-backdrop hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <div class="modal-title">
+          <i data-lucide="key-round" class="text-cyan"></i>
+          <h3>High-Entropy Password Generator</h3>
+        </div>
+        <button class="close-modal-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="pass-display">
+          <span id="gen-pass-text"></span>
+          <div class="pass-actions">
+            <button id="btn-regen-pass" class="icon-btn"><i data-lucide="refresh-cw"></i></button>
+            <button id="btn-copy-pass" class="icon-btn"><i data-lucide="copy"></i></button>
+          </div>
+        </div>
+
+        <div class="gen-controls">
+          <label>Length: <strong id="pass-len-val">24</strong> characters</label>
+          <input type="range" id="pass-len-slider" min="12" max="64" value="24">
+
+          <div class="checkbox-grid">
+            <label><input type="checkbox" id="chk-upper" checked> Uppercase (A-Z)</label>
+            <label><input type="checkbox" id="chk-lower" checked> Lowercase (a-z)</label>
+            <label><input type="checkbox" id="chk-num" checked> Numbers (0-9)</label>
+            <label><input type="checkbox" id="chk-sym" checked> Symbols (!@#$)</label>
+          </div>
+        </div>
+
+        <button id="btn-insert-pass" class="primary-btn glow-btn">Insert Password into Active Note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPORT / IMPORT BACKUP MODAL -->
+  <div id="modal-backup" class="modal-backdrop hidden">
+    <div class="modal-card glass-panel">
+      <div class="modal-header">
+        <div class="modal-title">
+          <i data-lucide="file-json" class="text-emerald"></i>
+          <h3>Encrypted Backup & Restore</h3>
+        </div>
+        <button class="close-modal-btn"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="backup-section">
+          <h4>Export Encrypted Backup</h4>
+          <p>Download a 256-bit AES-GCM encrypted JSON package of your notes vault.</p>
+          <button id="btn-export-json" class="primary-btn glow-btn"><i data-lucide="download"></i> Download Backup .json</button>
+        </div>
+
+        <hr class="modal-divider">
+
+        <div class="backup-section">
+          <h4>Restore Vault from File</h4>
+          <p>Select a <code>vaultnote_backup_*.json</code> file to restore notes.</p>
+          <label class="file-dropzone">
+            <i data-lucide="upload" class="text-cyan"></i>
+            <span>Select .json Backup File</span>
+            <input type="file" id="import-file-input" accept=".json">
+          </label>
+          <div id="import-status" class="status-banner hidden"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
