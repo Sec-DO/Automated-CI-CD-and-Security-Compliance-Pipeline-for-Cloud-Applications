@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  vaultnote-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vaultnote_app
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
