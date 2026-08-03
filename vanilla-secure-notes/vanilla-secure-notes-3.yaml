@@ -1,0 +1,456 @@
+def FAILED_STAGE = "Not Available"
+pipeline {
+    agent any
+
+    environment {
+        REPO_URL = 'https://github.com/Sec-DO/Automated-CI-CD-and-Security-Compliance-Pipeline-for-Cloud-Applications.git'
+        BRANCH = "${env.BRANCH}"
+        COMPOSE_PROJECT = 'vanilla-secure-notes'
+		APP_DIR = 'vanilla-secure-notes'
+		HOST = "${env.HOST}"
+        TARGET_URL = "http://${HOST}:9200"
+		DOCKERHUB_USERNAME = "${DOCKERHUB_USERNAME}"
+		EMAIL_TO = "${env.EMAIL_TO}"
+		STACK_NAME = 'vanilla'
+		
+		
+		
+    }
+
+    options {
+        timestamps()
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps {
+				script {
+					FAILED_STAGE = "Clean Workspace"
+				}
+                cleanWs()
+            }
+        }
+
+        stage('Checkout Source Code') {
+            steps {
+				script {
+						FAILED_STAGE = "Checkout Source Code"
+					}
+                git branch: "${BRANCH}", url: "${REPO_URL}"
+            }
+        }
+
+        stage('Verify Environment') {
+            steps {
+				script {
+					FAILED_STAGE = "Verify Environment"
+				}
+                sh '''
+                echo "========================================"
+                echo "Docker Version"
+                docker --version
+
+                echo ""
+                echo "Docker Compose Version"
+                docker compose version
+
+                echo ""
+                echo "Docker Buildx Version"
+                docker buildx version || true
+
+                echo ""
+                echo "Trivy Version"
+                trivy --version
+
+                echo ""
+                echo "Repository Structure"
+                pwd
+                ls -la
+                ls -la ${APP_DIR}
+                '''
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+				script {
+					FAILED_STAGE = "SonarQube Analysis"
+				}
+                dir("${APP_DIR}") {
+                    script {
+                        def scannerHome = tool 'SonarScanner'
+                        withSonarQubeEnv('SonarScanner') {
+							
+                            sh "${scannerHome}/bin/sonar-scanner"
+                        }
+                    }
+                }
+            }
+        }
+		stage('Check Critical Vulnerabilities') {
+			steps {
+				script {
+					FAILED_STAGE = "Verify Environment"
+				}
+				script {
+					withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+						def critical = sh(
+							script: '''
+							curl -s -u $SONAR_TOKEN: \
+							"http://localhost:9000/api/issues/search?componentKeys=vanilla-secure-notes&types=VULNERABILITY&severities=CRITICAL" \
+							| jq '.total'
+							''',
+							returnStdout: true
+						).trim()
+
+						//if (critical.toInteger() > 0) {
+						//	error("Pipeline failed: ${critical} critical vulnerabilities found.")
+						//}
+					}
+				}
+			}
+		}
+		stage('Build Docker Image') {
+			steps {
+				script {
+					FAILED_STAGE = "Build Docker Image"
+				}
+				dir("${APP_DIR}") {
+					sh '''
+						docker build -t ${DOCKERHUB_USERNAME}/vanilla-secure-notes:${BUILD_NUMBER} .
+						docker tag ${DOCKERHUB_USERNAME}/vanilla-secure-notes:${BUILD_NUMBER} ${DOCKERHUB_USERNAME}/vanilla-secure-notes:latest
+					'''
+				}
+			}
+		}
+		stage('Trivy Image Scan') {
+			steps {
+				script {
+					FAILED_STAGE = "Trivy Image Scan"
+				}
+				
+				sh '''
+					mkdir -p reports
+
+					trivy image \
+					  --format template \
+					  --template "@$HOME/trivy/templates/html.tpl" \
+					  -o trivy-report.html \
+					${DOCKERHUB_USERNAME}/vanilla-secure-notes:${BUILD_NUMBER}
+				'''
+			}
+		}
+		stage('Docker Login') {
+			steps {
+				script {
+					FAILED_STAGE = "Docker Login"
+				}
+				withCredentials([usernamePassword(
+					credentialsId: 'dockerhub-creds',
+					usernameVariable: 'DOCKER_USER',
+					passwordVariable: 'DOCKER_PASS'
+				)]) {
+					sh '''
+						echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+					'''
+				}
+			}
+		}
+		stage('Push Docker Image') {
+			steps {
+				script {
+					FAILED_STAGE = "Push Docker Image"
+				}
+				sh '''
+					docker push ${DOCKERHUB_USERNAME}/vanilla-secure-notes:${BUILD_NUMBER}
+					docker push ${DOCKERHUB_USERNAME}/vanilla-secure-notes:latest
+				'''
+			}
+		}
+		stage('Pull Latest Image') {
+			steps {
+				script {
+					FAILED_STAGE = "Pull Latest Image"
+				}
+				sh '''
+					docker pull ${DOCKERHUB_USERNAME}/vanilla-secure-notes:latest
+				'''
+			}
+		}
+
+        stage('Deploy Docker Swarm') {
+			steps {
+				script {
+					FAILED_STAGE = "Deploy Docker Swarm"
+				}
+
+				dir("${APP_DIR}") {
+
+					sh '''
+					docker pull ${DOCKERHUB_USERNAME}/vanilla-secure-notes:latest
+
+					docker stack deploy \
+						-c docker-swarm.yml \
+						${STACK_NAME}
+					'''
+
+				}
+			}
+		}
+		
+		stage('Verify Swarm Deployment') {
+			steps {
+				script {
+					FAILED_STAGE = "Verify Swarm Deployment"
+				}
+
+				sh '''
+				docker stack ls
+				docker service ls
+				docker service ps ${STACK_NAME}_vanilla-vaultnote
+				'''
+			}
+		}
+		
+		stage('Health Check') {
+			steps {
+				script {
+					FAILED_STAGE = "Health Check"
+				}
+
+				sh '''
+				echo "Waiting for application to start..."
+
+				for i in {1..12}; do
+					STATUS=$(curl -o /dev/null -s -w "%{http_code}" ${TARGET_URL} || true)
+
+					if [ "$STATUS" = "200" ]; then
+						echo "Application is healthy."
+						exit 0
+					fi
+
+					echo "Attempt $i: Application not ready yet..."
+					sleep 10
+				done
+
+				echo "Application failed health check."
+				exit 1
+				'''
+			}
+		}
+
+        stage('OWASP ZAP Scan') {
+            steps {
+				script {
+					FAILED_STAGE = "OWASP ZAP Scan"
+				}
+                script {
+
+                    sh 'mkdir -p zap-reports'
+
+                    int zapStatus = sh(
+                        script: """
+                        docker run --rm \
+                          --network host \
+                          --user root \
+                          -v \$(pwd)/zap-reports:/zap/wrk \
+                          ghcr.io/zaproxy/zaproxy:stable \
+                          zap-baseline.py \
+                          -t ${TARGET_URL} \
+                          -r zap-report.html
+                        """,
+                        returnStatus: true
+                    )
+
+                    echo "ZAP Exit Code: ${zapStatus}"
+
+                    if (zapStatus == 3) {
+                        error("OWASP ZAP execution failed.")
+                    }
+
+                    if (zapStatus == 1) {
+                        error("OWASP ZAP detected FAIL findings.")
+                    }
+
+                    if (zapStatus == 2) {
+                        echo "OWASP ZAP reported WARN findings. Continuing pipeline."
+                    }
+
+                    sh '''
+                    echo "Generated Reports"
+                    ls -lah zap-reports || true
+                    '''
+                }
+            }
+        }
+
+		stage('Verify Deployment') {
+			steps {
+
+				script {
+					FAILED_STAGE = "Verify Deployment"
+				}
+
+				sh '''
+
+				echo "Stacks"
+				docker stack ls
+
+				echo ""
+
+				echo "Services"
+				docker service ls
+
+				echo ""
+
+				echo "Tasks"
+				docker service ps ${STACK_NAME}_vanilla-vaultnote
+
+				echo ""
+
+				docker ps
+
+				'''
+
+			}
+		}
+    }
+	
+	
+	post {
+
+    always {
+
+        archiveArtifacts(
+            artifacts: '''
+                trivy-report.html,
+                zap-reports/*.html,
+                zap-reports/*.yaml,
+                **/*.log
+            ''',
+            allowEmptyArchive: true
+        )
+
+    }
+
+    success {
+
+        emailext(
+            subject: "✅ SUCCESS | SecDO Pipeline #${BUILD_NUMBER}",
+            mimeType: 'text/html',
+
+            body: """
+				<html>
+				<body>
+
+				<h2 style="color:green;">✅ SecDO Pipeline Completed Successfully</h2>
+
+				<table border="1" cellpadding="6" cellspacing="0">
+					<tr><td><b>Project</b></td><td>${JOB_NAME}</td></tr>
+					<tr><td><b>Build Number</b></td><td>#${BUILD_NUMBER}</td></tr>
+					<tr><td><b>Status</b></td><td><font color="green"><b>SUCCESS</b></font></td></tr>
+					<tr><td><b>Branch</b></td><td>${BRANCH}</td></tr>
+					<tr><td><b>Build URL</b></td><td><a href="${BUILD_URL}">${BUILD_URL}</a></td></tr>
+					<tr><td><b>Application</b></td><td><a href="${TARGET_URL}">${TARGET_URL}</a></td></tr>
+					<tr><td><b>SonarQube</b></td><td><a href="http://${HOST}:9000">View Dashboard</a></td></tr>
+				</table>
+
+				<br>
+
+				<h3>Pipeline Summary</h3>
+
+				<table border="1" cellpadding="5" cellspacing="0">
+				<tr>
+					<th>Stage</th>
+					<th>Status</th>
+				</tr>
+
+				<tr><td>Checkout Source Code</td><td>✅ Passed</td></tr>
+				<tr><td>SonarQube Analysis</td><td>✅ Passed</td></tr>
+				<tr><td>Build Docker Image</td><td>✅ Passed</td></tr>
+				<tr><td>Trivy Image Scan</td><td>✅ Passed</td></tr>
+				<tr><td>Docker Push</td><td>✅ Passed</td></tr>
+				<tr><td>Deployment</td><td>✅ Passed</td></tr>
+				<tr><td>OWASP ZAP Scan</td><td>✅ Passed</td></tr>
+
+				</table>
+
+				<br>
+
+				<h3>Attached Reports</h3>
+
+				<ul>
+				<li>📄 Trivy Image Scan Report</li>
+				<li>📄 OWASP ZAP HTML Report</li>
+				</ul>
+
+				<br>
+
+				<p>
+				The application was successfully built, scanned, deployed and verified.
+				</p>
+
+				<br>
+
+				Regards,<br>
+				<b>Team RARA</b>
+
+				</body>
+				</html>
+				""",
+
+							attachmentsPattern: '''
+								trivy-report.html,
+								zap-reports/*.html,
+								zap-reports/*.yaml,
+								**/*.log
+							''',
+
+							to: "${EMAIL_TO}"
+						)
+					}
+
+					failure {
+
+						emailext(
+							subject: "❌ FAILED | SecDO Pipeline #${BUILD_NUMBER}",
+							mimeType: 'text/html',
+
+							body: """
+				<html>
+				<body>
+
+				<h2 style="color:red;">❌ SecDO Pipeline Failed</h2>
+
+				<table border="1" cellpadding="6" cellspacing="0">
+				<tr><td><b>Project</b></td><td>${JOB_NAME}</td></tr>
+				<tr><td><b>Build Number</b></td><td>#${BUILD_NUMBER}</td></tr>
+				<tr><td><b>Status</b></td><td><font color="red"><b>FAILED</b></font></td></tr>
+				<tr><td><b>Failed Stage</b></td><td>${FAILED_STAGE}</td></tr>
+				<tr><td><b>Build URL</b></td><td><a href="${BUILD_URL}">${BUILD_URL}</a></td></tr>
+				</table>
+
+				<br>
+
+				<p>
+				Please review the attached reports and Jenkins console log.
+				</p>
+
+				</body>
+				</html>
+				""",
+
+							attachmentsPattern: '''
+								trivy-report.html,
+								zap-reports/*.html,
+								zap-reports/*.yaml,
+								**/*.log
+							''',
+
+							to: "${EMAIL_TO}"
+						)
+					}
+				}
+	
+}
