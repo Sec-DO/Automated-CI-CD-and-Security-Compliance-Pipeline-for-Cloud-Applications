@@ -1,6 +1,6 @@
 services:
   vanilla-vaultnote:
-    image: therahulpatil/vanilla_vaultnote_app:latest
+    image: therahulpatil/vanilla-secure-notes:latest
     container_name: vanilla_vaultnote_app
 
     ports:
