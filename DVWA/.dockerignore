@@ -4,3 +4,9 @@
 **/Dockerfile*
 **/.dockerignore
 **/compose.yml
+**/.scannerwork
+**/.gitlab
+**/compose-ecr.yml
+**/jenkinsfile*
+**/README*
+**/sonar-project.properties
