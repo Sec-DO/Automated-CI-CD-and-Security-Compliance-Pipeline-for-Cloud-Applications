@@ -1,18 +1,18 @@
-version: '3.8'
-
 services:
   vanilla-vaultnote:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: therahulpatil/sec-notes:latest
     container_name: vanilla_vaultnote_app
+
     ports:
       - "9200:80"
+
     restart: unless-stopped
+
     security_opt:
       - no-new-privileges:true
+
     read_only: false
+
     tmpfs:
       - /var/cache/nginx
       - /var/run
-      - /tmp
