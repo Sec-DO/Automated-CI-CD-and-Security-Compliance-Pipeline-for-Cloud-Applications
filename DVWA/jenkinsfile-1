@@ -1,3 +1,4 @@
+def FAILED_STAGE = "Not Available"
 pipeline {
     agent any
 
@@ -23,12 +24,20 @@ pipeline {
 
         stage('Checkout Source Code') {
             steps {
+				script {
+							FAILED_STAGE = "Checkout Source Code"
+						}
                 git branch: "${BRANCH}", url: "${REPO_URL}"
             }
         }
 
         stage('Verify Environment') {
             steps {
+				script {
+								FAILED_STAGE = "Verify Environment"
+							}
+
+			
                 sh '''
                 echo "========================================"
                 echo "Docker Version"
@@ -57,6 +66,9 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
+				script {
+							FAILED_STAGE = "SonarQube Analysis"
+						}
                 dir('DVWA') {
                     script {
                         def scannerHome = tool 'SonarScanner'
@@ -70,6 +82,9 @@ pipeline {
 
         stage('Deploy DVWA') {
             steps {
+				script {
+							FAILED_STAGE = "Deploy DVWA"
+						}
                 dir('DVWA') {
                     sh '''
                     docker compose -p ${COMPOSE_PROJECT} down || true
@@ -82,6 +97,9 @@ pipeline {
 
         stage('Trivy Image Scan') {
             steps {
+				script {
+							FAILED_STAGE = "Trivy Image Scan"
+						}
                 sh '''
                 mkdir -p trivy-reports
 
@@ -115,6 +133,9 @@ pipeline {
 
         stage('OWASP ZAP Scan') {
             steps {
+				script {
+							FAILED_STAGE = "OWASP ZAP Scan"
+						}
                 script {
 
                     sh 'mkdir -p zap-reports'
@@ -158,6 +179,9 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
+				script {
+							FAILED_STAGE = "Verify Deployment"
+						}
                 dir('DVWA') {
                     sh '''
                     echo "========================================"
@@ -178,87 +202,138 @@ pipeline {
 
     post {
 
-        success {
-            echo "========================================"
-            echo "Pipeline completed successfully!"
-            echo "DVWA deployed successfully."
-            echo "SonarQube completed."
-            echo "Trivy completed."
-            echo "OWASP ZAP completed."
-            echo "========================================"
-        }
+    always {
 
-        failure {
-            echo "========================================"
-            echo "Pipeline Failed!"
-            echo "========================================"
-        }
+        archiveArtifacts(
+            artifacts: '''
+                trivy-report.html,
+                zap-reports/*.html,
+                zap-reports/*.yaml,
+                **/*.log
+            ''',
+            allowEmptyArchive: true
+        )
 
-        always {
-
-            archiveArtifacts(
-                artifacts: 'trivy-reports/*.txt,zap-reports/*.html',
-                fingerprint: true,
-                allowEmptyArchive: true
-            )
-
-            emailext(
-                to: "${EMAIL_TO}",
-                subject: "SecDO Pipeline - ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
-                mimeType: 'text/html',
-                attachmentsPattern: 'trivy-reports/*.txt,zap-reports/*.html',
-                body: """
-                <html>
-                <body>
-
-                <h2>SecDO DevSecOps Pipeline Report</h2>
-
-                <table border="1" cellpadding="8" cellspacing="0">
-                    <tr>
-                        <th>Project</th>
-                        <td>${env.JOB_NAME}</td>
-                    </tr>
-
-                    <tr>
-                        <th>Build Number</th>
-                        <td>${env.BUILD_NUMBER}</td>
-                    </tr>
-
-                    <tr>
-                        <th>Status</th>
-                        <td>${currentBuild.currentResult}</td>
-                    </tr>
-
-                    <tr>
-                        <th>Build URL</th>
-                        <td>
-                            <a href="${env.BUILD_URL}">
-                                ${env.BUILD_URL}
-                            </a>
-                        </td>
-                    </tr>
-                </table>
-
-                <br>
-
-                <h3>Security Stages</h3>
-
-                <ul>
-                    <li> SonarQube (SAST)</li>
-                    <li> Trivy Image Scan</li>
-                    <li> OWASP ZAP Baseline Scan</li>
-                </ul>
-
-                <p>
-                Trivy and ZAP reports are attached with this email if they were generated successfully.
-                </p>
-
-                </body>
-                </html>
-                """
-            )
-
-            cleanWs()
-        }
     }
+
+    success {
+
+        emailext(
+            subject: "✅ SUCCESS | SecDO Pipeline #${BUILD_NUMBER}",
+            mimeType: 'text/html',
+
+            body: """
+				<html>
+				<body>
+
+				<h2 style="color:green;">✅ SecDO Pipeline Completed Successfully</h2>
+
+				<table border="1" cellpadding="6" cellspacing="0">
+					<tr><td><b>Project</b></td><td>${JOB_NAME}</td></tr>
+					<tr><td><b>Build Number</b></td><td>#${BUILD_NUMBER}</td></tr>
+					<tr><td><b>Status</b></td><td><font color="green"><b>SUCCESS</b></font></td></tr>
+					<tr><td><b>Branch</b></td><td>${BRANCH}</td></tr>
+					<tr><td><b>Build URL</b></td><td><a href="${BUILD_URL}">${BUILD_URL}</a></td></tr>
+					<tr><td><b>Application</b></td><td><a href="${TARGET_URL}">${TARGET_URL}</a></td></tr>
+					<tr><td><b>SonarQube</b></td><td><a href="http://${HOST}:9000">View Dashboard</a></td></tr>
+				</table>
+
+				<br>
+
+				<h3>Pipeline Summary</h3>
+
+				<table border="1" cellpadding="5" cellspacing="0">
+				<tr>
+					<th>Stage</th>
+					<th>Status</th>
+				</tr>
+
+				<tr><td>Checkout Source Code</td><td>✅ Passed</td></tr>
+				<tr><td>SonarQube Analysis</td><td>✅ Passed</td></tr>
+				<tr><td>Build Docker Image</td><td>✅ Passed</td></tr>
+				<tr><td>Trivy Image Scan</td><td>✅ Passed</td></tr>
+				<tr><td>Docker Push</td><td>✅ Passed</td></tr>
+				<tr><td>Deployment</td><td>✅ Passed</td></tr>
+				<tr><td>OWASP ZAP Scan</td><td>✅ Passed</td></tr>
+
+				</table>
+
+				<br>
+
+				<h3>Attached Reports</h3>
+
+				<ul>
+				<li>📄 Trivy Image Scan Report</li>
+				<li>📄 OWASP ZAP HTML Report</li>
+				</ul>
+
+				<br>
+
+				<p>
+				The application was successfully built, scanned, deployed and verified.
+				</p>
+
+				<br>
+
+				Regards,<br>
+				<b>SecDO DevSecOps Pipeline</b>
+
+				</body>
+				</html>
+				""",
+
+							attachmentsPattern: '''
+								trivy-report.html,
+								zap-reports/*.html,
+								zap-reports/*.yaml,
+								**/*.log
+							''',
+
+							to: "${EMAIL_TO}"
+						)
+					}
+
+					failure {
+
+						emailext(
+							subject: "❌ FAILED | SecDO Pipeline #${BUILD_NUMBER}",
+							mimeType: 'text/html',
+
+							body: """
+				<html>
+				<body>
+
+				<h2 style="color:red;">❌ SecDO Pipeline Failed</h2>
+
+				<table border="1" cellpadding="6" cellspacing="0">
+				<tr><td><b>Project</b></td><td>${JOB_NAME}</td></tr>
+				<tr><td><b>Build Number</b></td><td>#${BUILD_NUMBER}</td></tr>
+				<tr><td><b>Status</b></td><td><font color="red"><b>FAILED</b></font></td></tr>
+				<tr><td><b>Failed Stage</b></td><td>${FAILED_STAGE}</td></tr>
+				<tr><td><b>Build URL</b></td><td><a href="${BUILD_URL}">${BUILD_URL}</a></td></tr>
+				</table>
+
+				<br>
+
+				<p>
+				Please review the attached reports and Jenkins console log.
+				</p>
+
+				</body>
+				</html>
+				""",
+
+							attachmentsPattern: '''
+								trivy-report.html,
+								zap-reports/*.html,
+								zap-reports/*.yaml,
+								**/*.log
+							''',
+
+							to: "${EMAIL_TO}"
+			)
+		}
+	}
+	
 }
+
